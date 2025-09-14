@@ -1,4 +1,4 @@
-# app.py - Complete Fixed AI Patient Simulator
+# app.py - AI Patient Simulator for Streamlit Cloud
 import streamlit as st
 import openai
 import json
@@ -9,9 +9,6 @@ from typing import Dict, List, Optional
 import pandas as pd
 import re
 import time
-import base64
-from io import BytesIO
-import streamlit.components.v1 as components
 
 # Page configuration
 st.set_page_config(
@@ -34,10 +31,6 @@ if 'patient_openness' not in st.session_state:
     st.session_state.patient_openness = 3.0
 if 'show_actions' not in st.session_state:
     st.session_state.show_actions = True
-if 'voice_mode' not in st.session_state:
-    st.session_state.voice_mode = False
-if 'voice_input' not in st.session_state:
-    st.session_state.voice_input = ""
 
 # Data structures
 @dataclass
@@ -88,7 +81,7 @@ class PatientConfig:
     disorder_traits: DisorderTraits
     session_context: str = ""
 
-# Patient templates
+# Pre-built templates
 PATIENT_TEMPLATES = {
     "emma_bpd": PatientConfig(
         name="Emma",
@@ -157,176 +150,18 @@ def get_openai_client():
         st.stop()
     return openai.OpenAI(api_key=api_key)
 
-class AIPatientSimulator:
-    """AI Patient that responds to therapist"""
-    
-    def __init__(self):
-        self.client = get_openai_client()
-    
-    def generate_patient_response(self, config: PatientConfig, conversation_history: List[str], 
-                                rapport: float, openness: float, include_voice: bool = False) -> tuple:
-        """Generate what the PATIENT says in response to the THERAPIST"""
-        
-        system_prompt = self.build_patient_prompt(config, rapport, openness)
-        
-        messages = [{"role": "system", "content": system_prompt}]
-        
-        # Build conversation: therapist = user, patient = assistant
-        for i, msg in enumerate(conversation_history[-6:]):
-            if i % 2 == 0:  # Even indices are therapist messages
-                messages.append({"role": "user", "content": f"Therapist: {msg}"})
-            else:  # Odd indices are patient responses
-                messages.append({"role": "assistant", "content": msg})
-        
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                max_tokens=150,
-                temperature=0.8
-            )
-            patient_text = response.choices[0].message.content
-            
-            # Generate patient's voice if requested
-            patient_audio = b""
-            if include_voice:
-                voice = self.select_patient_voice(config)
-                patient_audio = self.text_to_speech(patient_text, voice)
-            
-            return patient_text, patient_audio
-            
-        except Exception as e:
-            return f"I'm having trouble responding right now.", b""
-    
-    def text_to_speech(self, text: str, voice: str = "alloy") -> bytes:
-        """Convert patient's text to speech"""
-        try:
-            # Remove action descriptions for speech
-            clean_text = re.sub(r'\*[^*]*\*', '', text).strip()
-            
-            response = self.client.audio.speech.create(
-                model="tts-1",
-                voice=voice,
-                input=clean_text,
-                speed=1.0
-            )
-            return response.content
-        except Exception as e:
-            st.error(f"Text-to-speech error: {str(e)}")
-            return b""
-    
-    def select_patient_voice(self, config: PatientConfig) -> str:
-        """Select voice for the patient based on their characteristics"""
-        if config.gender.lower() == "male":
-            if config.age < 30:
-                return "echo"  # Younger male
-            else:
-                return "onyx"  # Mature male
-        else:  # Female
-            if config.age < 25:
-                return "nova"   # Younger female
-            elif "Anxiety" in config.diagnosis:
-                return "shimmer"  # Softer, anxious
-            elif "Depression" in config.diagnosis:
-                return "alloy"   # More subdued
-            else:
-                return "nova"    # Default female
-    
-    def build_patient_prompt(self, config: PatientConfig, rapport: float, openness: float) -> str:
-        """Build prompt for the AI patient"""
-        
-        core_descriptions = self._traits_to_descriptions(config.core_traits)
-        disorder_descriptions = self._disorder_traits_to_descriptions(config.disorder_traits, config.diagnosis)
-        
-        return f"""You are {config.name}, a {config.age}-year-old {config.gender.lower()} patient in therapy.
-
-DIAGNOSIS: {config.diagnosis}
-BACKGROUND: {config.background_story}
-SESSION CONTEXT: {config.session_context}
-
-PERSONALITY TRAITS:
-{core_descriptions}
-
-DISORDER SYMPTOMS:
-{disorder_descriptions}
-
-CURRENT STATE:
-- Rapport with therapist: {rapport:.1f}/10
-- Openness level: {openness:.1f}/10
-
-IMPORTANT INSTRUCTIONS:
-- You are the PATIENT, not the therapist
-- Respond to what the therapist says to you
-- Stay completely in character as {config.name}
-- Show your symptoms through your words and behavior
-- Keep responses conversational (2-4 sentences)
-- React authentically based on your personality traits
-- Don't be artificially cooperative - show realistic resistance when appropriate
-
-Remember: You are experiencing real psychological distress. Respond as a real patient would."""
-
-    def _traits_to_descriptions(self, traits: CoreTraits) -> str:
-        descriptions = []
-        
-        if traits.emotional_intensity > 7:
-            descriptions.append("Your emotions are very intense and overwhelming")
-        if traits.mood_stability < 3:
-            descriptions.append("Your mood changes rapidly and unpredictably")
-        if traits.trust_level < 4:
-            descriptions.append("You have difficulty trusting others, including therapists")
-        if traits.attachment_anxiety > 7:
-            descriptions.append("You fear abandonment and rejection intensely")
-        if traits.catastrophic_thinking > 7:
-            descriptions.append("You tend to imagine worst-case scenarios")
-        if traits.self_criticism > 7:
-            descriptions.append("You are very hard on yourself and self-critical")
-        if traits.verbal_expressiveness < 4:
-            descriptions.append("You tend to give short, minimal responses")
-        elif traits.verbal_expressiveness > 7:
-            descriptions.append("You tend to be very talkative and expressive")
-        if traits.defensiveness > 7:
-            descriptions.append("You become defensive easily when challenged")
-            
-        return "- " + "\n- ".join(descriptions) if descriptions else "- Generally typical patterns"
-    
-    def _disorder_traits_to_descriptions(self, traits: DisorderTraits, diagnosis: str) -> str:
-        descriptions = []
-        
-        if "Borderline" in diagnosis:
-            if traits.abandonment_sensitivity > 6:
-                descriptions.append("Intense fear of being abandoned or rejected")
-            if traits.identity_instability > 6:
-                descriptions.append("Uncertain about who you are and what you want")
-            if traits.impulsivity > 6:
-                descriptions.append("Tendency to act impulsively when distressed")
-                
-        elif "Depression" in diagnosis:
-            if traits.hopelessness > 6:
-                descriptions.append("Feeling hopeless about the future")
-            if traits.energy_level < 4:
-                descriptions.append("Very low energy and motivation")
-            if traits.anhedonia > 6:
-                descriptions.append("Little interest or pleasure in activities")
-                
-        elif "Anxiety" in diagnosis:
-            if traits.worry_intensity > 6:
-                descriptions.append("Constant, intense worrying about many things")
-            if traits.physical_anxiety > 6:
-                descriptions.append("Physical symptoms of anxiety")
-            if traits.perfectionism > 7:
-                descriptions.append("Very high standards and fear of making mistakes")
-        
-        return "- " + "\n- ".join(descriptions) if descriptions else "- Mild symptoms"
-
+# Therapeutic analyzer
 class TherapeuticAnalyzer:
     THERAPEUTIC_TECHNIQUES = {
         "validation": ["understand", "makes sense", "hear you", "valid", "difficult"],
         "empathy": ["feel", "sounds", "imagine", "must be", "experiencing"],
-        "clarification": ["what do you mean", "tell me more", "help me understand"],
-        "reflection": ["you're saying", "sounds like", "it seems", "you feel"],
-        "rapport": ["thank you", "appreciate", "brave", "strength", "trust"],
-        "cbt": ["thought", "thinking", "evidence", "alternative", "realistic"],
-        "acceptance": ["okay", "alright", "understandable", "human", "normal"]
+        "clarification": ["what do you mean", "can you tell me more", "help me understand", "clarify"],
+        "reflection": ["you're saying", "sounds like", "it seems", "you feel", "you're experiencing"],
+        "rapport": ["thank you for sharing", "appreciate", "brave", "strength", "trust"],
+        "cbt": ["thought", "thinking", "evidence", "alternative", "realistic", "challenge"],
+        "acceptance": ["okay", "that's alright", "understandable", "human", "normal"],
+        "acknowledgment": ["I see", "I notice", "I hear", "yes", "right"],
+        "cognitive_restructuring": ["different way", "perspective", "reframe", "consider", "another view"]
     }
     
     @classmethod
@@ -345,10 +180,11 @@ class TherapeuticAnalyzer:
         positive_impact = (
             technique_scores.get("validation", 0) * 0.3 +
             technique_scores.get("empathy", 0) * 0.3 +
-            technique_scores.get("acceptance", 0) * 0.2
+            technique_scores.get("acceptance", 0) * 0.2 +
+            technique_scores.get("acknowledgment", 0) * 0.1
         )
         
-        challenging_impact = technique_scores.get("cbt", 0)
+        challenging_impact = technique_scores.get("cbt", 0) + technique_scores.get("cognitive_restructuring", 0)
         
         defensiveness_modifier = (10 - patient_traits.defensiveness) / 10
         trust_modifier = patient_traits.trust_level / 10
@@ -357,287 +193,220 @@ class TherapeuticAnalyzer:
         
         return max(-1.0, min(1.0, rapport_change))
 
+# Patient simulator
+class OpenAIPatientSimulator:
+    def __init__(self):
+        self.client = get_openai_client()
+    
+    def generate_patient_response(self, config: PatientConfig, conversation_history: List[str], 
+                                rapport: float, openness: float) -> str:
+        system_prompt = self.build_system_prompt(config, rapport, openness)
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        for i, msg in enumerate(conversation_history[-6:]):
+            role = "assistant" if i % 2 == 0 else "user"
+            messages.append({"role": role, "content": msg})
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=200,
+                temperature=0.7 + (random.random() - 0.5) * 0.3
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"I'm having trouble responding right now. Please try again."
+    
+    def build_system_prompt(self, config: PatientConfig, rapport: float, openness: float) -> str:
+        core_descriptions = self._traits_to_descriptions(config.core_traits)
+        disorder_descriptions = self._disorder_traits_to_descriptions(config.disorder_traits, config.diagnosis)
+        rapport_desc = self._get_rapport_description(rapport)
+        openness_desc = self._get_openness_description(openness)
+        
+        return f"""You are {config.name}, a {config.age}-year-old {config.gender.lower()} patient in therapy.
+
+DIAGNOSIS: {config.diagnosis}
+BACKGROUND: {config.background_story}
+SESSION CONTEXT: {config.session_context}
+
+PERSONALITY TRAITS:
+{core_descriptions}
+
+DISORDER-SPECIFIC SYMPTOMS:
+{disorder_descriptions}
+
+CURRENT EMOTIONAL STATE:
+- Rapport with therapist: {rapport_desc}
+- Openness level: {openness_desc}
+
+RESPONSE GUIDELINES:
+1. Stay completely in character as {config.name}
+2. Respond naturally as a real patient would
+3. Show symptoms through behavior, not by stating them directly
+4. Let your traits influence your communication style
+5. React authentically to the therapist's approach
+6. Sometimes have mood shifts or emotional reactions
+7. Don't be artificially cooperative - show realistic resistance or confusion when appropriate
+8. Keep responses conversational length (2-4 sentences typically)
+
+Remember: You are not playing a role for educational purposes - you ARE {config.name} experiencing these struggles."""
+
+    def _traits_to_descriptions(self, traits: CoreTraits) -> str:
+        descriptions = []
+        
+        if traits.emotional_intensity > 7:
+            descriptions.append("Your emotions are very intense and overwhelming")
+        elif traits.emotional_intensity < 3:
+            descriptions.append("You tend to feel emotionally numb or disconnected")
+            
+        if traits.mood_stability < 3:
+            descriptions.append("Your mood changes rapidly and unpredictably")
+            
+        if traits.trust_level < 4:
+            descriptions.append("You have difficulty trusting others, including therapists")
+        if traits.attachment_anxiety > 7:
+            descriptions.append("You fear abandonment and rejection intensely")
+            
+        if traits.catastrophic_thinking > 7:
+            descriptions.append("You tend to imagine worst-case scenarios")
+        if traits.self_criticism > 7:
+            descriptions.append("You are very hard on yourself and self-critical")
+            
+        if traits.verbal_expressiveness < 4:
+            descriptions.append("You tend to give short, minimal responses")
+        elif traits.verbal_expressiveness > 7:
+            descriptions.append("You tend to be very talkative and expressive")
+            
+        if traits.defensiveness > 7:
+            descriptions.append("You become defensive easily when challenged")
+            
+        return "- " + "\n- ".join(descriptions) if descriptions else "- Generally typical emotional and social patterns"
+    
+    def _disorder_traits_to_descriptions(self, traits: DisorderTraits, diagnosis: str) -> str:
+        descriptions = []
+        
+        if "Borderline" in diagnosis:
+            if traits.abandonment_sensitivity > 6:
+                descriptions.append("Intense fear of being abandoned or rejected")
+            if traits.identity_instability > 6:
+                descriptions.append("Uncertain about who you are and what you want")
+            if traits.impulsivity > 6:
+                descriptions.append("Tendency to act impulsively when distressed")
+                
+        elif "Depression" in diagnosis:
+            if traits.hopelessness > 6:
+                descriptions.append("Feeling hopeless about the future")
+            if traits.energy_level < 4:
+                descriptions.append("Very low energy and motivation")
+            if traits.anhedonia > 6:
+                descriptions.append("Little interest or pleasure in activities you used to enjoy")
+                
+        elif "Anxiety" in diagnosis:
+            if traits.worry_intensity > 6:
+                descriptions.append("Constant, intense worrying about many things")
+            if traits.physical_anxiety > 6:
+                descriptions.append("Physical symptoms of anxiety (tension, racing heart, etc.)")
+            if traits.perfectionism > 7:
+                descriptions.append("Very high standards and fear of making mistakes")
+        
+        return "- " + "\n- ".join(descriptions) if descriptions else "- Mild or well-managed symptoms"
+    
+    def _get_rapport_description(self, rapport: float) -> str:
+        if rapport >= 8: return "Strong trust and connection with therapist"
+        elif rapport >= 6: return "Growing trust, becoming more comfortable"  
+        elif rapport >= 4: return "Neutral, cautiously engaging"
+        elif rapport >= 2: return "Guarded, some mistrust"
+        else: return "Very guarded, resistant, or hostile"
+    
+    def _get_openness_description(self, openness: float) -> str:
+        if openness >= 8: return "Very open, sharing freely and deeply"
+        elif openness >= 6: return "Becoming more open, willing to share"
+        elif openness >= 4: return "Somewhat open, sharing surface-level information"  
+        elif openness >= 2: return "Guarded, minimal sharing"
+        else: return "Very closed off, resistant to sharing"
+
 @st.cache_resource
 def get_patient_simulator():
-    return AIPatientSimulator()
+    return OpenAIPatientSimulator()
 
 @st.cache_resource  
 def get_analyzer():
     return TherapeuticAnalyzer()
 
-def voice_input_component():
-    """Create a voice input component using Streamlit components"""
-    voice_html = """
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; padding: 20px; margin: 10px 0; text-align: center;">
-        <button id="voiceBtn" onclick="toggleVoiceRecognition()" style="background: #ff4b4b; color: white; border: none; border-radius: 50%; width: 80px; height: 80px; font-size: 28px; cursor: pointer; margin: 10px; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);">🎙️</button>
-        <div id="voiceStatus" style="color: white; font-size: 18px; margin: 10px; font-weight: 500;">Click microphone to speak as therapist</div>
-        <div id="voiceResult" style="background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 15px; margin: 10px 0; color: white; min-height: 50px;">Speak naturally - your speech will be sent automatically</div>
-        <div style="background: rgba(76, 175, 80, 0.2); border-radius: 8px; padding: 10px; margin: 10px 0; color: white; font-size: 14px;">💡 Auto-send enabled: Patient will respond when you finish speaking</div>
-    </div>
-
-    <script>
-        let recognition;
-        let isListening = false;
-        let currentTranscript = '';
-        let silenceTimer;
-        
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.lang = 'en-US';
-            
-            recognition.onstart = function() {
-                isListening = true;
-                document.getElementById('voiceBtn').style.background = '#00d4aa';
-                document.getElementById('voiceBtn').innerHTML = '⏹️';
-                document.getElementById('voiceStatus').textContent = 'Listening... speak naturally as the therapist';
-                document.getElementById('voiceResult').textContent = 'Listening...';
-            };
-            
-            recognition.onresult = function(event) {
-                let finalTranscript = '';
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
-                    }
-                }
-                
-                if (finalTranscript) {
-                    currentTranscript = finalTranscript;
-                    document.getElementById('voiceResult').textContent = finalTranscript;
-                    
-                    clearTimeout(silenceTimer);
-                    silenceTimer = setTimeout(() => {
-                        if (currentTranscript && isListening) {
-                            sendVoiceInput();
-                        }
-                    }, 2000);
-                }
-            };
-            
-            recognition.onend = function() {
-                if (currentTranscript && isListening) {
-                    sendVoiceInput();
-                } else {
-                    resetVoiceState();
-                }
-            };
-            
-            recognition.onerror = function(event) {
-                document.getElementById('voiceStatus').textContent = 'Error: ' + event.error + '. Click to try again.';
-                resetVoiceState();
-            };
-        }
-        
-        function toggleVoiceRecognition() {
-            if (!recognition) return;
-            
-            if (isListening) {
-                recognition.stop();
-            } else {
-                currentTranscript = '';
-                recognition.start();
-            }
-        }
-        
-        function sendVoiceInput() {
-            if (currentTranscript.trim()) {
-                document.getElementById('voiceStatus').textContent = 'Processing... Patient will respond shortly';
-                document.getElementById('voiceResult').textContent = 'You said: "' + currentTranscript + '" - Sending to patient...';
-                
-                window.parent.postMessage({
-                    type: 'streamlit:setComponentValue',
-                    value: currentTranscript.trim()
-                }, '*');
-                
-                resetVoiceState();
-            }
-        }
-        
-        function resetVoiceState() {
-            isListening = false;
-            document.getElementById('voiceBtn').style.background = '#ff4b4b';
-            document.getElementById('voiceBtn').innerHTML = '🎙️';
-            document.getElementById('voiceStatus').textContent = 'Click microphone to speak as therapist';
-            clearTimeout(silenceTimer);
-        }
-    </script>
-    """
-    
-    return components.html(voice_html, height=200)
-
-def create_audio_player(audio_bytes: bytes, auto_play: bool = True) -> str:
-    """Create an auto-playing audio player for patient responses"""
-    if not audio_bytes:
-        return ""
-    
-    audio_b64 = base64.b64encode(audio_bytes).decode()
-    audio_html = f"""
-    <div style="margin: 10px 0;">
-        <audio controls {'autoplay' if auto_play else ''} style="width: 100%;">
-            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
-        </audio>
-    </div>
-    """
-    return audio_html
-
-def main():
-    st.title("🧠🎙️ AI Patient Simulator")
-    st.markdown("**You are the THERAPIST - Speak naturally and hear the patient respond**")
-    
-    with st.expander("ℹ️ How This Works", expanded=False):
-        st.markdown("""
-        **Natural Therapy Conversation:**
-        
-        **🎙️ Voice Mode:**
-        - Click microphone and speak naturally as the therapist
-        - Your speech automatically triggers patient response
-        - You only HEAR the patient's voice (not your own)
-        - Speak freely - no scripted responses needed
-        
-        **⌨️ Text Mode:**
-        - Type what you want to say as the therapist
-        - Patient responds with text or voice
-        
-        **🎯 Practice Goals:**
-        - Have natural conversations with AI patients
-        - Build rapport through your therapeutic approach
-        - Learn how different techniques affect patient responses
-        """)
-    
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        # Voice mode toggle
-        st.session_state.voice_mode = st.checkbox(
-            "🎙️ Enable Voice Mode", 
-            value=st.session_state.voice_mode,
-            help="Speak naturally + hear patient voice responses"
-        )
-        
-        st.divider()
-        
-        render_template_selection()
-        
-        st.divider()
-        render_session_controls()
-    
-    if st.session_state.session_active and st.session_state.patient_config:
-        render_therapy_interface()
-    else:
-        render_welcome_screen()
-
-def render_therapy_interface():
-    """Main therapy session interface"""
-    
-    # Patient info header
-    with st.container():
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.markdown(f"**Patient:** {st.session_state.patient_config.name} ({st.session_state.patient_config.age}, {st.session_state.patient_config.diagnosis})")
-        with col2:
-            st.metric("Rapport", f"{st.session_state.rapport_level:.1f}/10")
-        with col3:
-            st.metric("Openness", f"{st.session_state.patient_openness:.1f}/10")
-    
-    st.divider()
-    
-    # Display conversation
-    for i, (role, message) in enumerate(st.session_state.messages):
-        with st.chat_message(role):
-            if role == "patient":
-                processed_message = process_actions(message, st.session_state.show_actions)
-                st.markdown(f"**{st.session_state.patient_config.name}**: {processed_message}")
-                
-                # Auto-play patient audio if available
-                if st.session_state.voice_mode and f"patient_audio_{i}" in st.session_state:
-                    audio_html = create_audio_player(st.session_state[f"patient_audio_{i}"], auto_play=True)
-                    st.markdown(audio_html, unsafe_allow_html=True)
-            else:  # therapist
-                st.markdown(f"**You (Therapist)**: {message}")
-    
-    # Input interface
-    st.markdown("---")
-    
-    if st.session_state.voice_mode:
-        st.markdown("### 🎙️ Speak Naturally as Therapist")
-        st.markdown("*Click microphone, speak, then click 'Send Response' for the patient to reply*")
-        
-        # Voice input component
-        voice_input_component()
-        
-        # Alternative text input
-        st.markdown("**Alternative: Type instead of speaking**")
-        text_input = st.text_area(
-            "Type your response:",
-            placeholder="Or type here if you prefer text...",
-            height=80,
-            key="text_input_voice_mode"
-        )
-        
-        if st.button("Send Text Response", disabled=not text_input.strip()):
-            handle_therapist_response(text_input)
-    else:
-        # Text-only mode
-        st.markdown("### ⌨️ Type Your Response as Therapist")
-        if prompt := st.chat_input("What would you like to say to the patient?"):
-            handle_therapist_response(prompt)
-
-def handle_therapist_response(therapist_message: str):
-    """Process therapist's response and generate patient's reply"""
-    
-    # Add therapist message to conversation
-    st.session_state.messages.append(("therapist", therapist_message))
-    
-    # Analyze therapeutic techniques
-    analyzer = get_analyzer()
-    techniques = analyzer.analyze_response(therapist_message)
-    rapport_change = analyzer.calculate_rapport_change(techniques, st.session_state.patient_config.core_traits)
-    
-    # Update rapport and openness
-    st.session_state.rapport_level = max(0, min(10, st.session_state.rapport_level + rapport_change))
-    st.session_state.patient_openness = max(0, min(10, st.session_state.patient_openness + rapport_change * 0.5))
-    
-    # Generate patient's response
-    simulator = get_patient_simulator()
-    patient_response, patient_audio = simulator.generate_patient_response(
-        st.session_state.patient_config,
-        [msg[1] for msg in st.session_state.messages],
-        st.session_state.rapport_level,
-        st.session_state.patient_openness,
-        include_voice=st.session_state.voice_mode
-    )
-    
-    # Add patient response to conversation
-    st.session_state.messages.append(("patient", patient_response))
-    
-    # Store patient audio
-    if patient_audio:
-        message_index = len(st.session_state.messages) - 1
-        st.session_state[f"patient_audio_{message_index}"] = patient_audio
-    
-    # Show detected techniques
-    detected_techniques = [tech for tech, score in techniques.items() if score > 0]
-    if detected_techniques:
-        st.info(f"🔍 Detected techniques: {', '.join(detected_techniques)}")
-    
-    st.rerun()
-
 def process_actions(text, show_actions):
-    """Process action descriptions"""
     if show_actions:
         return re.sub(r'\*(.*?)\*', r'***\1***', text)
     else:
         return re.sub(r'\*[^*]*\*', '', text).strip()
 
+def export_transcript():
+    if not st.session_state.messages:
+        return None
+    
+    transcript = []
+    transcript.append(f"AI Patient Simulator - Session Transcript")
+    transcript.append(f"Patient: {st.session_state.patient_config.name}")
+    transcript.append(f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    transcript.append("="*50)
+    
+    for role, message in st.session_state.messages:
+        speaker = st.session_state.patient_config.name if role == "patient" else "Therapist"
+        transcript.append(f"{speaker}: {message}")
+        transcript.append("")
+    
+    return "\n".join(transcript)
+
+def main():
+    st.title("🧠 AI Patient Simulator")
+    st.markdown("**Practice your clinical skills with realistic AI patients**")
+    
+    with st.expander("ℹ️ About This Demo", expanded=False):
+        st.markdown("""
+        This is a demo of an AI Patient Simulator for psychology training.
+        
+        **Features:**
+        - Realistic patient responses based on psychological traits
+        - Real-time rapport tracking
+        - Therapeutic technique detection
+        - Custom patient configuration
+        
+        **How to use:**
+        1. Select or create a patient in the sidebar
+        2. Start a therapy session
+        3. Practice your therapeutic skills
+        4. Watch how your approach affects patient rapport
+        """)
+    
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        
+        setup_mode = st.radio(
+            "Setup Method:",
+            ["Pre-built Templates", "Custom Configuration"]
+        )
+        
+        if setup_mode == "Pre-built Templates":
+            render_template_selection()
+        else:
+            render_custom_configuration()
+        
+        st.divider()
+        render_session_controls()
+    
+    if st.session_state.session_active and st.session_state.patient_config:
+        render_chat_interface()
+    else:
+        render_welcome_screen()
+
 def render_template_selection():
-    st.subheader("📋 Select Patient")
+    st.subheader("📋 Pre-built Patients")
     
     template_descriptions = {
-        "emma_bpd": "**Emma (19, BPD)** - Emotional, fear of abandonment",
-        "david_mdd": "**David (45, Depression)** - Low energy, hopeless", 
-        "sarah_gad": "**Sarah (28, Anxiety)** - Worried, perfectionist"
+        "emma_bpd": "**Emma (19, BPD)**: College student, recent breakup, emotional intensity, fear of abandonment",
+        "david_mdd": "**David (45, Depression)**: Unemployed executive, low energy, hopelessness, minimal responses", 
+        "sarah_gad": "**Sarah (28, Anxiety)**: New mother, perfectionist, constant worry, seeks reassurance"
     }
     
     selected_template = st.radio(
@@ -655,20 +424,84 @@ def render_template_selection():
         st.success(f"Loaded {st.session_state.patient_config.name}!")
         st.rerun()
 
+def render_custom_configuration():
+    st.subheader("🎛️ Custom Patient")
+    
+    with st.expander("Basic Information", expanded=True):
+        name = st.text_input("Name", "Alex")
+        col1, col2 = st.columns(2)
+        with col1:
+            age = st.number_input("Age", 16, 80, 25)
+        with col2:
+            gender = st.selectbox("Gender", ["Male", "Female", "Non-binary"])
+        
+        diagnosis = st.selectbox("Diagnosis", [
+            "Borderline Personality Disorder",
+            "Major Depressive Disorder", 
+            "Generalized Anxiety Disorder"
+        ])
+    
+    with st.expander("Core Personality Traits"):
+        emotional_intensity = st.slider("Emotional Intensity", 0.0, 10.0, 5.0, 0.5)
+        trust_level = st.slider("Trust Level", 0.0, 10.0, 5.0, 0.5)
+        defensiveness = st.slider("Defensiveness", 0.0, 10.0, 5.0, 0.5)
+        verbal_expressiveness = st.slider("Verbal Expressiveness", 0.0, 10.0, 5.0, 0.5)
+    
+    disorder_traits = {}
+    with st.expander("Disorder-Specific Traits"):
+        if "Borderline" in diagnosis:
+            disorder_traits['abandonment_sensitivity'] = st.slider("Abandonment Sensitivity", 0.0, 10.0, 5.0, 0.5)
+            disorder_traits['identity_instability'] = st.slider("Identity Instability", 0.0, 10.0, 5.0, 0.5)
+            disorder_traits['impulsivity'] = st.slider("Impulsivity", 0.0, 10.0, 5.0, 0.5)
+        elif "Depression" in diagnosis:
+            disorder_traits['hopelessness'] = st.slider("Hopelessness", 0.0, 10.0, 5.0, 0.5)
+            disorder_traits['energy_level'] = st.slider("Energy Level", 0.0, 10.0, 5.0, 0.5)
+            disorder_traits['anhedonia'] = st.slider("Loss of Interest", 0.0, 10.0, 5.0, 0.5)
+        elif "Anxiety" in diagnosis:
+            disorder_traits['worry_intensity'] = st.slider("Worry Intensity", 0.0, 10.0, 5.0, 0.5)
+            disorder_traits['perfectionism'] = st.slider("Perfectionism", 0.0, 10.0, 5.0, 0.5)
+    
+    with st.expander("Background Information"):
+        background = st.text_area("Background Story", f"A {age}-year-old {gender.lower()} with {diagnosis.lower()}")
+        context = st.text_area("Session Context", "First session, patient appears nervous about being here")
+    
+    if st.button("Create Custom Patient", type="primary"):
+        core_traits = CoreTraits(
+            emotional_intensity=emotional_intensity,
+            trust_level=trust_level,
+            defensiveness=defensiveness,
+            verbal_expressiveness=verbal_expressiveness
+        )
+        
+        disorder_traits_obj = DisorderTraits(**disorder_traits)
+        
+        st.session_state.patient_config = PatientConfig(
+            name=name, age=age, gender=gender, diagnosis=diagnosis,
+            background_story=background, session_context=context,
+            core_traits=core_traits, disorder_traits=disorder_traits_obj
+        )
+        
+        st.session_state.messages = []
+        st.session_state.rapport_level = 5.0
+        st.session_state.patient_openness = 3.0
+        st.session_state.session_active = False
+        st.success(f"Created {name}!")
+        st.rerun()
+
 def render_session_controls():
     st.subheader("🎛️ Session Controls")
     
     st.session_state.show_actions = st.checkbox(
-        "Show patient actions", 
+        "Show action descriptions (*like this*)", 
         value=st.session_state.show_actions
     )
     
     if not st.session_state.patient_config:
-        st.warning("⚠️ Select a patient first")
+        st.warning("⚠️ Configure a patient first")
         return
     
     if not st.session_state.session_active:
-        if st.button("▶️ Start Therapy Session", type="primary", use_container_width=True):
+        if st.button("▶️ Start Session", type="primary", use_container_width=True):
             start_session()
     else:
         col1, col2 = st.columns(2)
@@ -683,64 +516,106 @@ def render_session_controls():
                 st.session_state.rapport_level = 5.0
                 st.session_state.patient_openness = 3.0
                 st.rerun()
+    
+    if st.session_state.messages:
+        transcript = export_transcript()
+        st.download_button(
+            "📄 Export Transcript",
+            transcript,
+            f"session_{st.session_state.patient_config.name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            "text/plain",
+            use_container_width=True
+        )
 
 def start_session():
-    """Start therapy session with patient's opening statement"""
     st.session_state.session_active = True
     st.session_state.messages = []
     st.session_state.rapport_level = 5.0
     st.session_state.patient_openness = 3.0
     
-    # Generate patient's opening statement
     simulator = get_patient_simulator()
-    initial_response, initial_audio = simulator.generate_patient_response(
-        st.session_state.patient_config, 
-        [], 
+    initial_response = simulator.generate_patient_response(
+        st.session_state.patient_config, [], 
         st.session_state.rapport_level, 
-        st.session_state.patient_openness,
-        include_voice=st.session_state.voice_mode
+        st.session_state.patient_openness
     )
     
     st.session_state.messages.append(("patient", initial_response))
-    
-    # Store initial audio
-    if initial_audio:
-        st.session_state["patient_audio_0"] = initial_audio
-    
     st.rerun()
 
 def render_welcome_screen():
     st.markdown("""
-    ## Welcome to AI Patient Simulator! 🧠
+    ## Welcome to the AI Patient Simulator! 👋
     
-    **You are the THERAPIST having natural conversations with AI patients.**
+    This tool helps psychology students practice their clinical skills with realistic AI patients.
     
-    ### 🎯 How it works:
+    ### How to get started:
+    1. **Configure a patient** in the sidebar (templates or custom)
+    2. **Start a session** to begin the simulation
+    3. **Practice your therapeutic techniques** and see real-time feedback
     
-    **👨‍⚕️ YOU = Therapist**
-    - Speak or type naturally (no scripts needed!)
-    - Ask whatever questions feel right
-    - Use your therapeutic instincts
+    ### Features:
+    - 🎭 **Realistic patient responses** based on psychological traits
+    - 📊 **Real-time rapport tracking** shows how your approach affects the patient
+    - 🔍 **Technique detection** identifies therapeutic methods you're using
+    - 📝 **Session transcripts** for review and learning
     
-    **🤖 AI = Patient** 
-    - Responds realistically based on their condition
-    - You HEAR their voice (not your own)
-    - Reacts authentically to your approach
-    
-    ### 🚀 Getting Started:
-    1. **Select a patient** in the sidebar (Emma, David, or Sarah)
-    2. **Enable voice mode** to hear the patient speak
-    3. **Start session** - patient will introduce themselves
-    4. **Click microphone and speak naturally** - no preparation needed!
-    
-    ### 🎙️ Voice Experience:
-    - **Natural conversation flow** - speak when ready
-    - **Auto-send** - patient responds when you finish talking
-    - **Patient voices only** - you hear them, not yourself
-    - **Browser-based** - works in Chrome, Safari, Edge
-    
-    **Ready to start a natural therapy conversation?**
+    Ready to practice? Configure a patient in the sidebar to begin!
     """)
+    
+    if st.session_state.patient_config:
+        st.info(f"✅ {st.session_state.patient_config.name} is loaded and ready. Click 'Start Session' in the sidebar!")
 
+def render_chat_interface():
+    with st.container():
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown(f"**Patient:** {st.session_state.patient_config.name} ({st.session_state.patient_config.age}, {st.session_state.patient_config.diagnosis})")
+        with col2:
+            st.metric("Rapport", f"{st.session_state.rapport_level:.1f}/10")
+        with col3:
+            st.metric("Openness", f"{st.session_state.patient_openness:.1f}/10")
+    
+    st.divider()
+    
+    for role, message in st.session_state.messages:
+        with st.chat_message(role):
+            processed_message = process_actions(message, st.session_state.show_actions)
+            if role == "patient":
+                st.markdown(f"**{st.session_state.patient_config.name}**: {processed_message}")
+            else:
+                st.markdown(f"**Therapist**: {processed_message}")
+    
+    if prompt := st.chat_input("Type your response as the therapist..."):
+        handle_therapist_response(prompt)
+
+def handle_therapist_response(message: str):
+    st.session_state.messages.append(("therapist", message))
+    
+    analyzer = get_analyzer()
+    techniques = analyzer.analyze_response(message)
+    rapport_change = analyzer.calculate_rapport_change(techniques, st.session_state.patient_config.core_traits)
+    
+    st.session_state.rapport_level = max(0, min(10, st.session_state.rapport_level + rapport_change))
+    st.session_state.patient_openness = max(0, min(10, st.session_state.patient_openness + rapport_change * 0.5))
+    
+    simulator = get_patient_simulator()
+    patient_response = simulator.generate_patient_response(
+        st.session_state.patient_config, 
+        [msg[1] for msg in st.session_state.messages],
+        st.session_state.rapport_level, 
+        st.session_state.patient_openness
+    )
+    
+    st.session_state.messages.append(("patient", patient_response))
+    
+    detected_techniques = [tech for tech, score in techniques.items() if score > 0]
+    if detected_techniques:
+        st.info(f"🔍 Detected techniques: {', '.join(detected_techniques)}")
+    
+    st.rerun()
+
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
