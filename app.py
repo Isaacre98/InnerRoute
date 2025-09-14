@@ -1,4 +1,4 @@
-# app.py - Browser-Native Voice AI Patient Simulator
+# app.py - Complete Fixed AI Patient Simulator
 import streamlit as st
 import openai
 import json
@@ -11,6 +11,7 @@ import re
 import time
 import base64
 from io import BytesIO
+import streamlit.components.v1 as components
 
 # Page configuration
 st.set_page_config(
@@ -38,7 +39,7 @@ if 'voice_mode' not in st.session_state:
 if 'voice_input' not in st.session_state:
     st.session_state.voice_input = ""
 
-# Data structures (same as before)
+# Data structures
 @dataclass
 class CoreTraits:
     emotional_intensity: float = 5.0
@@ -364,161 +365,107 @@ def get_patient_simulator():
 def get_analyzer():
     return TherapeuticAnalyzer()
 
-def get_voice_recognition_html():
-    """HTML/JavaScript for browser voice recognition"""
-    return """
-    <div id="voice-input-container">
-        <style>
-            .voice-controls {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border-radius: 15px;
-                padding: 20px;
-                margin: 10px 0;
-                text-align: center;
-            }
-            .voice-btn {
-                background: #ff4b4b;
-                color: white;
-                border: none;
-                border-radius: 50%;
-                width: 80px;
-                height: 80px;
-                font-size: 28px;
-                cursor: pointer;
-                margin: 10px;
-                transition: all 0.3s ease;
-                box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);
-            }
-            .voice-btn:hover {
-                transform: scale(1.1);
-                box-shadow: 0 6px 20px rgba(255, 75, 75, 0.4);
-            }
-            .voice-btn.listening {
-                background: #00d4aa;
-                animation: pulse 1.5s infinite;
-            }
-            @keyframes pulse {
-                0% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.7); }
-                70% { box-shadow: 0 0 0 20px rgba(0, 212, 170, 0); }
-                100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0); }
-            }
-            .voice-status {
-                color: white;
-                font-size: 18px;
-                margin: 10px;
-                font-weight: 500;
-            }
-            .voice-result {
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                padding: 15px;
-                margin: 10px 0;
-                color: white;
-                min-height: 50px;
-            }
-        </style>
-        
-        <div class="voice-controls">
-            <button id="voiceBtn" class="voice-btn" onclick="toggleVoiceRecognition()">🎙️</button>
-            <div id="voiceStatus" class="voice-status">Click microphone to speak</div>
-            <div id="voiceResult" class="voice-result">Your speech will appear here...</div>
-            <button id="sendBtn" onclick="sendVoiceInput()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 10px; cursor: pointer; display: none;">Send This Response</button>
-        </div>
-
-        <script>
-            let recognition;
-            let isListening = false;
-            let currentTranscript = '';
-            
-            // Check for browser support
-            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                recognition.continuous = true;
-                recognition.interimResults = true;
-                recognition.lang = 'en-US';
-                
-                recognition.onstart = function() {
-                    isListening = true;
-                    document.getElementById('voiceBtn').classList.add('listening');
-                    document.getElementById('voiceBtn').innerHTML = '⏹️';
-                    document.getElementById('voiceStatus').textContent = 'Listening... speak now';
-                    document.getElementById('voiceResult').textContent = 'Listening...';
-                };
-                
-                recognition.onresult = function(event) {
-                    let transcript = '';
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
-                        if (event.results[i].isFinal) {
-                            transcript += event.results[i][0].transcript;
-                        }
-                    }
-                    if (transcript) {
-                        currentTranscript = transcript;
-                        document.getElementById('voiceResult').textContent = transcript;
-                        document.getElementById('sendBtn').style.display = 'inline-block';
-                    }
-                };
-                
-                recognition.onend = function() {
-                    isListening = false;
-                    document.getElementById('voiceBtn').classList.remove('listening');
-                    document.getElementById('voiceBtn').innerHTML = '🎙️';
-                    if (currentTranscript) {
-                        document.getElementById('voiceStatus').textContent = 'Speech captured! Click "Send" or speak again';
-                    } else {
-                        document.getElementById('voiceStatus').textContent = 'Click microphone to speak';
-                        document.getElementById('voiceResult').textContent = 'No speech detected. Try again.';
-                    }
-                };
-                
-                recognition.onerror = function(event) {
-                    document.getElementById('voiceStatus').textContent = 'Error: ' + event.error + '. Try again.';
-                    document.getElementById('voiceBtn').classList.remove('listening');
-                    document.getElementById('voiceBtn').innerHTML = '🎙️';
-                    isListening = false;
-                };
-            } else {
-                document.getElementById('voiceStatus').textContent = 'Voice recognition not supported in this browser';
-                document.getElementById('voiceBtn').disabled = true;
-            }
-            
-            function toggleVoiceRecognition() {
-                if (!recognition) return;
-                
-                if (isListening) {
-                    recognition.stop();
-                } else {
-                    currentTranscript = '';
-                    document.getElementById('sendBtn').style.display = 'none';
-                    recognition.start();
-                }
-            }
-            
-            function sendVoiceInput() {
-                if (currentTranscript) {
-                    // Create a hidden input to pass data to Streamlit
-                    const hiddenInput = document.createElement('input');
-                    hiddenInput.type = 'hidden';
-                    hiddenInput.name = 'voice_input';
-                    hiddenInput.value = currentTranscript;
-                    document.body.appendChild(hiddenInput);
-                    
-                    // Trigger Streamlit rerun with the voice input
-                    window.parent.postMessage({
-                        type: 'streamlit:setComponentValue',
-                        value: currentTranscript
-                    }, '*');
-                    
-                    // Clear the display
-                    document.getElementById('voiceResult').textContent = 'Sent: "' + currentTranscript + '"';
-                    document.getElementById('voiceStatus').textContent = 'Message sent! Click microphone to speak again';
-                    document.getElementById('sendBtn').style.display = 'none';
-                    currentTranscript = '';
-                }
-            }
-        </script>
+def voice_input_component():
+    """Create a voice input component using Streamlit components"""
+    voice_html = """
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; padding: 20px; margin: 10px 0; text-align: center;">
+        <button id="voiceBtn" onclick="toggleVoiceRecognition()" style="background: #ff4b4b; color: white; border: none; border-radius: 50%; width: 80px; height: 80px; font-size: 28px; cursor: pointer; margin: 10px; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);">🎙️</button>
+        <div id="voiceStatus" style="color: white; font-size: 18px; margin: 10px; font-weight: 500;">Click microphone to speak as therapist</div>
+        <div id="voiceResult" style="background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 15px; margin: 10px 0; color: white; min-height: 50px;">Speak naturally - your speech will be sent automatically</div>
+        <div style="background: rgba(76, 175, 80, 0.2); border-radius: 8px; padding: 10px; margin: 10px 0; color: white; font-size: 14px;">💡 Auto-send enabled: Patient will respond when you finish speaking</div>
     </div>
+
+    <script>
+        let recognition;
+        let isListening = false;
+        let currentTranscript = '';
+        let silenceTimer;
+        
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            
+            recognition.onstart = function() {
+                isListening = true;
+                document.getElementById('voiceBtn').style.background = '#00d4aa';
+                document.getElementById('voiceBtn').innerHTML = '⏹️';
+                document.getElementById('voiceStatus').textContent = 'Listening... speak naturally as the therapist';
+                document.getElementById('voiceResult').textContent = 'Listening...';
+            };
+            
+            recognition.onresult = function(event) {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    }
+                }
+                
+                if (finalTranscript) {
+                    currentTranscript = finalTranscript;
+                    document.getElementById('voiceResult').textContent = finalTranscript;
+                    
+                    clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(() => {
+                        if (currentTranscript && isListening) {
+                            sendVoiceInput();
+                        }
+                    }, 2000);
+                }
+            };
+            
+            recognition.onend = function() {
+                if (currentTranscript && isListening) {
+                    sendVoiceInput();
+                } else {
+                    resetVoiceState();
+                }
+            };
+            
+            recognition.onerror = function(event) {
+                document.getElementById('voiceStatus').textContent = 'Error: ' + event.error + '. Click to try again.';
+                resetVoiceState();
+            };
+        }
+        
+        function toggleVoiceRecognition() {
+            if (!recognition) return;
+            
+            if (isListening) {
+                recognition.stop();
+            } else {
+                currentTranscript = '';
+                recognition.start();
+            }
+        }
+        
+        function sendVoiceInput() {
+            if (currentTranscript.trim()) {
+                document.getElementById('voiceStatus').textContent = 'Processing... Patient will respond shortly';
+                document.getElementById('voiceResult').textContent = 'You said: "' + currentTranscript + '" - Sending to patient...';
+                
+                window.parent.postMessage({
+                    type: 'streamlit:setComponentValue',
+                    value: currentTranscript.trim()
+                }, '*');
+                
+                resetVoiceState();
+            }
+        }
+        
+        function resetVoiceState() {
+            isListening = false;
+            document.getElementById('voiceBtn').style.background = '#ff4b4b';
+            document.getElementById('voiceBtn').innerHTML = '🎙️';
+            document.getElementById('voiceStatus').textContent = 'Click microphone to speak as therapist';
+            clearTimeout(silenceTimer);
+        }
+    </script>
     """
+    
+    return components.html(voice_html, height=200)
 
 def create_audio_player(audio_bytes: bytes, auto_play: bool = True) -> str:
     """Create an auto-playing audio player for patient responses"""
@@ -537,31 +484,26 @@ def create_audio_player(audio_bytes: bytes, auto_play: bool = True) -> str:
 
 def main():
     st.title("🧠🎙️ AI Patient Simulator")
-    st.markdown("**You are the THERAPIST practicing with AI patients**")
-    
-    # Check for voice input from JavaScript
-    voice_input = st.experimental_get_query_params().get('voice_input', [None])[0]
-    if voice_input and voice_input != st.session_state.voice_input:
-        st.session_state.voice_input = voice_input
-        handle_therapist_response(voice_input)
+    st.markdown("**You are the THERAPIST - Speak naturally and hear the patient respond**")
     
     with st.expander("ℹ️ How This Works", expanded=False):
         st.markdown("""
-        **You are the THERAPIST, the AI is your PATIENT**
+        **Natural Therapy Conversation:**
         
-        **Text Mode:**
-        - Type your responses as the therapist
-        - Patient responds with text
+        **🎙️ Voice Mode:**
+        - Click microphone and speak naturally as the therapist
+        - Your speech automatically triggers patient response
+        - You only HEAR the patient's voice (not your own)
+        - Speak freely - no scripted responses needed
         
-        **Voice Mode:**
-        - 🎙️ Click microphone and speak your response
-        - 🔊 Patient responds with voice (automatically plays)
-        - You can also type if preferred
+        **⌨️ Text Mode:**
+        - Type what you want to say as the therapist
+        - Patient responds with text or voice
         
-        **Practice Goals:**
-        - Build rapport with the patient
-        - Use therapeutic techniques (validation, empathy, etc.)
-        - Watch how your approach affects patient openness
+        **🎯 Practice Goals:**
+        - Have natural conversations with AI patients
+        - Build rapport through your therapeutic approach
+        - Learn how different techniques affect patient responses
         """)
     
     with st.sidebar:
@@ -571,7 +513,7 @@ def main():
         st.session_state.voice_mode = st.checkbox(
             "🎙️ Enable Voice Mode", 
             value=st.session_state.voice_mode,
-            help="Use browser voice recognition + patient voice responses"
+            help="Speak naturally + hear patient voice responses"
         )
         
         st.divider()
@@ -619,26 +561,29 @@ def render_therapy_interface():
     st.markdown("---")
     
     if st.session_state.voice_mode:
-        st.markdown("### 🎙️ Your Response (as Therapist)")
+        st.markdown("### 🎙️ Speak Naturally as Therapist")
+        st.markdown("*Click microphone, speak naturally, and the patient will respond automatically*")
         
-        # Voice input interface
-        st.markdown(get_voice_recognition_html(), unsafe_allow_html=True)
+        # Voice input component
+        voice_result = voice_input_component()
+        if voice_result:
+            handle_therapist_response(voice_result)
         
         # Alternative text input
-        st.markdown("**Or type your response:**")
+        st.markdown("**Alternative: Type instead of speaking**")
         text_input = st.text_area(
             "Type your response:",
-            placeholder="You can type here instead of using voice...",
-            height=100,
+            placeholder="Or type here if you prefer text...",
+            height=80,
             key="text_input_voice_mode"
         )
         
         if st.button("Send Text Response", disabled=not text_input.strip()):
             handle_therapist_response(text_input)
-            st.session_state.text_input_voice_mode = ""
     else:
         # Text-only mode
-        if prompt := st.chat_input("Type your response as the therapist..."):
+        st.markdown("### ⌨️ Type Your Response as Therapist")
+        if prompt := st.chat_input("What would you like to say to the patient?"):
             handle_therapist_response(prompt)
 
 def handle_therapist_response(therapist_message: str):
