@@ -719,13 +719,6 @@ def render_session_controls():
         "Show patient actions", 
         value=st.session_state.show_actions
     )
-    def render_session_controls():
-    st.subheader("🎛️ Session Controls")
-    
-    st.session_state.show_actions = st.checkbox(
-        "Show patient actions", 
-        value=st.session_state.show_actions
-    )
     
     if not st.session_state.patient_config:
         st.warning("⚠️ Select a patient first")
