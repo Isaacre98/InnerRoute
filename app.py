@@ -562,12 +562,10 @@ def render_therapy_interface():
     
     if st.session_state.voice_mode:
         st.markdown("### 🎙️ Speak Naturally as Therapist")
-        st.markdown("*Click microphone, speak naturally, and the patient will respond automatically*")
+        st.markdown("*Click microphone, speak, then click 'Send Response' for the patient to reply*")
         
         # Voice input component
-        voice_result = voice_input_component()
-        if voice_result:
-            handle_therapist_response(voice_result)
+        voice_input_component()
         
         # Alternative text input
         st.markdown("**Alternative: Type instead of speaking**")
