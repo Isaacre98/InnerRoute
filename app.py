@@ -1,4 +1,4 @@
-# app.py - Fixed Voice AI Patient Simulator (You are the THERAPIST)
+# app.py - Browser-Native Voice AI Patient Simulator
 import streamlit as st
 import openai
 import json
@@ -11,7 +11,6 @@ import re
 import time
 import base64
 from io import BytesIO
-from streamlit_mic_recorder import mic_recorder
 
 # Page configuration
 st.set_page_config(
@@ -36,6 +35,8 @@ if 'show_actions' not in st.session_state:
     st.session_state.show_actions = True
 if 'voice_mode' not in st.session_state:
     st.session_state.voice_mode = False
+if 'voice_input' not in st.session_state:
+    st.session_state.voice_input = ""
 
 # Data structures (same as before)
 @dataclass
@@ -155,51 +156,11 @@ def get_openai_client():
         st.stop()
     return openai.OpenAI(api_key=api_key)
 
-class VoiceManager:
-    """Handles voice input (therapist) and voice output (patient)"""
-    
-    def __init__(self):
-        self.client = get_openai_client()
-    
-    def speech_to_text(self, audio_bytes: bytes) -> str:
-        """Convert therapist's speech to text"""
-        try:
-            audio_file = BytesIO(audio_bytes)
-            audio_file.name = "therapist_audio.wav"
-            
-            transcript = self.client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="text"
-            )
-            return transcript
-        except Exception as e:
-            st.error(f"Speech-to-text error: {str(e)}")
-            return ""
-    
-    def text_to_speech(self, text: str, voice: str = "alloy") -> bytes:
-        """Convert patient's text to speech"""
-        try:
-            # Remove action descriptions for speech
-            clean_text = re.sub(r'\*[^*]*\*', '', text).strip()
-            
-            response = self.client.audio.speech.create(
-                model="tts-1",
-                voice=voice,
-                input=clean_text,
-                speed=1.0
-            )
-            return response.content
-        except Exception as e:
-            st.error(f"Text-to-speech error: {str(e)}")
-            return b""
-
 class AIPatientSimulator:
-    """AI Patient that responds to therapist (you)"""
+    """AI Patient that responds to therapist"""
     
     def __init__(self):
         self.client = get_openai_client()
-        self.voice_manager = VoiceManager()
     
     def generate_patient_response(self, config: PatientConfig, conversation_history: List[str], 
                                 rapport: float, openness: float, include_voice: bool = False) -> tuple:
@@ -229,12 +190,29 @@ class AIPatientSimulator:
             patient_audio = b""
             if include_voice:
                 voice = self.select_patient_voice(config)
-                patient_audio = self.voice_manager.text_to_speech(patient_text, voice)
+                patient_audio = self.text_to_speech(patient_text, voice)
             
             return patient_text, patient_audio
             
         except Exception as e:
             return f"I'm having trouble responding right now.", b""
+    
+    def text_to_speech(self, text: str, voice: str = "alloy") -> bytes:
+        """Convert patient's text to speech"""
+        try:
+            # Remove action descriptions for speech
+            clean_text = re.sub(r'\*[^*]*\*', '', text).strip()
+            
+            response = self.client.audio.speech.create(
+                model="tts-1",
+                voice=voice,
+                input=clean_text,
+                speed=1.0
+            )
+            return response.content
+        except Exception as e:
+            st.error(f"Text-to-speech error: {str(e)}")
+            return b""
     
     def select_patient_voice(self, config: PatientConfig) -> str:
         """Select voice for the patient based on their characteristics"""
@@ -386,9 +364,161 @@ def get_patient_simulator():
 def get_analyzer():
     return TherapeuticAnalyzer()
 
-@st.cache_resource
-def get_voice_manager():
-    return VoiceManager()
+def get_voice_recognition_html():
+    """HTML/JavaScript for browser voice recognition"""
+    return """
+    <div id="voice-input-container">
+        <style>
+            .voice-controls {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                border-radius: 15px;
+                padding: 20px;
+                margin: 10px 0;
+                text-align: center;
+            }
+            .voice-btn {
+                background: #ff4b4b;
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 80px;
+                height: 80px;
+                font-size: 28px;
+                cursor: pointer;
+                margin: 10px;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);
+            }
+            .voice-btn:hover {
+                transform: scale(1.1);
+                box-shadow: 0 6px 20px rgba(255, 75, 75, 0.4);
+            }
+            .voice-btn.listening {
+                background: #00d4aa;
+                animation: pulse 1.5s infinite;
+            }
+            @keyframes pulse {
+                0% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.7); }
+                70% { box-shadow: 0 0 0 20px rgba(0, 212, 170, 0); }
+                100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0); }
+            }
+            .voice-status {
+                color: white;
+                font-size: 18px;
+                margin: 10px;
+                font-weight: 500;
+            }
+            .voice-result {
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                padding: 15px;
+                margin: 10px 0;
+                color: white;
+                min-height: 50px;
+            }
+        </style>
+        
+        <div class="voice-controls">
+            <button id="voiceBtn" class="voice-btn" onclick="toggleVoiceRecognition()">🎙️</button>
+            <div id="voiceStatus" class="voice-status">Click microphone to speak</div>
+            <div id="voiceResult" class="voice-result">Your speech will appear here...</div>
+            <button id="sendBtn" onclick="sendVoiceInput()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 10px; cursor: pointer; display: none;">Send This Response</button>
+        </div>
+
+        <script>
+            let recognition;
+            let isListening = false;
+            let currentTranscript = '';
+            
+            // Check for browser support
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'en-US';
+                
+                recognition.onstart = function() {
+                    isListening = true;
+                    document.getElementById('voiceBtn').classList.add('listening');
+                    document.getElementById('voiceBtn').innerHTML = '⏹️';
+                    document.getElementById('voiceStatus').textContent = 'Listening... speak now';
+                    document.getElementById('voiceResult').textContent = 'Listening...';
+                };
+                
+                recognition.onresult = function(event) {
+                    let transcript = '';
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) {
+                            transcript += event.results[i][0].transcript;
+                        }
+                    }
+                    if (transcript) {
+                        currentTranscript = transcript;
+                        document.getElementById('voiceResult').textContent = transcript;
+                        document.getElementById('sendBtn').style.display = 'inline-block';
+                    }
+                };
+                
+                recognition.onend = function() {
+                    isListening = false;
+                    document.getElementById('voiceBtn').classList.remove('listening');
+                    document.getElementById('voiceBtn').innerHTML = '🎙️';
+                    if (currentTranscript) {
+                        document.getElementById('voiceStatus').textContent = 'Speech captured! Click "Send" or speak again';
+                    } else {
+                        document.getElementById('voiceStatus').textContent = 'Click microphone to speak';
+                        document.getElementById('voiceResult').textContent = 'No speech detected. Try again.';
+                    }
+                };
+                
+                recognition.onerror = function(event) {
+                    document.getElementById('voiceStatus').textContent = 'Error: ' + event.error + '. Try again.';
+                    document.getElementById('voiceBtn').classList.remove('listening');
+                    document.getElementById('voiceBtn').innerHTML = '🎙️';
+                    isListening = false;
+                };
+            } else {
+                document.getElementById('voiceStatus').textContent = 'Voice recognition not supported in this browser';
+                document.getElementById('voiceBtn').disabled = true;
+            }
+            
+            function toggleVoiceRecognition() {
+                if (!recognition) return;
+                
+                if (isListening) {
+                    recognition.stop();
+                } else {
+                    currentTranscript = '';
+                    document.getElementById('sendBtn').style.display = 'none';
+                    recognition.start();
+                }
+            }
+            
+            function sendVoiceInput() {
+                if (currentTranscript) {
+                    // Create a hidden input to pass data to Streamlit
+                    const hiddenInput = document.createElement('input');
+                    hiddenInput.type = 'hidden';
+                    hiddenInput.name = 'voice_input';
+                    hiddenInput.value = currentTranscript;
+                    document.body.appendChild(hiddenInput);
+                    
+                    // Trigger Streamlit rerun with the voice input
+                    window.parent.postMessage({
+                        type: 'streamlit:setComponentValue',
+                        value: currentTranscript
+                    }, '*');
+                    
+                    // Clear the display
+                    document.getElementById('voiceResult').textContent = 'Sent: "' + currentTranscript + '"';
+                    document.getElementById('voiceStatus').textContent = 'Message sent! Click microphone to speak again';
+                    document.getElementById('sendBtn').style.display = 'none';
+                    currentTranscript = '';
+                }
+            }
+        </script>
+    </div>
+    """
 
 def create_audio_player(audio_bytes: bytes, auto_play: bool = True) -> str:
     """Create an auto-playing audio player for patient responses"""
@@ -409,6 +539,12 @@ def main():
     st.title("🧠🎙️ AI Patient Simulator")
     st.markdown("**You are the THERAPIST practicing with AI patients**")
     
+    # Check for voice input from JavaScript
+    voice_input = st.experimental_get_query_params().get('voice_input', [None])[0]
+    if voice_input and voice_input != st.session_state.voice_input:
+        st.session_state.voice_input = voice_input
+        handle_therapist_response(voice_input)
+    
     with st.expander("ℹ️ How This Works", expanded=False):
         st.markdown("""
         **You are the THERAPIST, the AI is your PATIENT**
@@ -418,13 +554,13 @@ def main():
         - Patient responds with text
         
         **Voice Mode:**
-        - 🎙️ Record your voice as the therapist
+        - 🎙️ Click microphone and speak your response
         - 🔊 Patient responds with voice (automatically plays)
         - You can also type if preferred
         
         **Practice Goals:**
         - Build rapport with the patient
-        - Use therapeutic techniques
+        - Use therapeutic techniques (validation, empathy, etc.)
         - Watch how your approach affects patient openness
         """)
     
@@ -435,15 +571,10 @@ def main():
         st.session_state.voice_mode = st.checkbox(
             "🎙️ Enable Voice Mode", 
             value=st.session_state.voice_mode,
-            help="Record your voice + hear patient responses"
+            help="Use browser voice recognition + patient voice responses"
         )
         
         st.divider()
-        
-        setup_mode = st.radio(
-            "Setup Method:",
-            ["Pre-built Templates"]
-        )
         
         render_template_selection()
         
@@ -488,57 +619,27 @@ def render_therapy_interface():
     st.markdown("---")
     
     if st.session_state.voice_mode:
-        render_voice_input_interface()
+        st.markdown("### 🎙️ Your Response (as Therapist)")
+        
+        # Voice input interface
+        st.markdown(get_voice_recognition_html(), unsafe_allow_html=True)
+        
+        # Alternative text input
+        st.markdown("**Or type your response:**")
+        text_input = st.text_area(
+            "Type your response:",
+            placeholder="You can type here instead of using voice...",
+            height=100,
+            key="text_input_voice_mode"
+        )
+        
+        if st.button("Send Text Response", disabled=not text_input.strip()):
+            handle_therapist_response(text_input)
+            st.session_state.text_input_voice_mode = ""
     else:
-        render_text_input_interface()
-
-def render_voice_input_interface():
-    """Voice + text input interface for therapist"""
-    
-    st.markdown("### 🎙️ Your Response (as Therapist)")
-    
-    # Voice recorder
-    audio = mic_recorder(
-        start_prompt="🎙️ Click to Record Your Voice",
-        stop_prompt="⏹️ Stop Recording",
-        just_once=False,
-        use_container_width=True,
-        callback=None,
-        args=(),
-        kwargs={},
-        key="therapist_recorder"
-    )
-    
-    # Process recorded audio
-    if audio is not None:
-        voice_manager = get_voice_manager()
-        
-        # Convert audio to text
-        transcribed_text = voice_manager.speech_to_text(audio["bytes"])
-        
-        if transcribed_text:
-            st.success(f"🎤 You said: {transcribed_text}")
-            
-            # Send the transcribed text as therapist response
-            if st.button("Send This Response", type="primary"):
-                handle_therapist_response(transcribed_text)
-    
-    # Alternative text input
-    st.markdown("**Or type your response:**")
-    text_input = st.text_area(
-        "Type your response as the therapist:",
-        placeholder="You can type here instead of using voice...",
-        height=100
-    )
-    
-    if st.button("Send Text Response", disabled=not text_input.strip()):
-        handle_therapist_response(text_input)
-
-def render_text_input_interface():
-    """Text-only input interface"""
-    
-    if prompt := st.chat_input("Type your response as the therapist..."):
-        handle_therapist_response(prompt)
+        # Text-only mode
+        if prompt := st.chat_input("Type your response as the therapist..."):
+            handle_therapist_response(prompt)
 
 def handle_therapist_response(therapist_message: str):
     """Process therapist's response and generate patient's reply"""
@@ -619,78 +720,4 @@ def render_session_controls():
         value=st.session_state.show_actions
     )
     
-    if not st.session_state.patient_config:
-        st.warning("⚠️ Select a patient first")
-        return
-    
-    if not st.session_state.session_active:
-        if st.button("▶️ Start Therapy Session", type="primary", use_container_width=True):
-            start_session()
-    else:
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⏹️ End Session", use_container_width=True):
-                st.session_state.session_active = False
-                st.success("Session ended")
-                st.rerun()
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True):
-                st.session_state.messages = []
-                st.session_state.rapport_level = 5.0
-                st.session_state.patient_openness = 3.0
-                st.rerun()
-
-def start_session():
-    """Start therapy session with patient's opening statement"""
-    st.session_state.session_active = True
-    st.session_state.messages = []
-    st.session_state.rapport_level = 5.0
-    st.session_state.patient_openness = 3.0
-    
-    # Generate patient's opening statement
-    simulator = get_patient_simulator()
-    initial_response, initial_audio = simulator.generate_patient_response(
-        st.session_state.patient_config, 
-        [], 
-        st.session_state.rapport_level, 
-        st.session_state.patient_openness,
-        include_voice=st.session_state.voice_mode
-    )
-    
-    st.session_state.messages.append(("patient", initial_response))
-    
-    # Store initial audio
-    if initial_audio:
-        st.session_state["patient_audio_0"] = initial_audio
-    
-    st.rerun()
-
-def render_welcome_screen():
-    st.markdown("""
-    ## Welcome to AI Patient Simulator! 🧠
-    
-    **You are the THERAPIST practicing with AI patients.**
-    
-    ### 🎯 How it works:
-    
-    **👨‍⚕️ YOU = Therapist**
-    - Speak or type your therapeutic responses
-    - Practice different approaches and techniques
-    - Build rapport with your AI patient
-    
-    **🤖 AI = Patient** 
-    - Responds realistically based on their psychological profile
-    - Shows symptoms and personality traits
-    - Reacts to your therapeutic approach
-    
-    ### 🚀 Getting Started:
-    1. **Select a patient** in the sidebar (Emma, David, or Sarah)
-    2. **Choose voice or text mode**
-    3. **Start session** - patient will speak first
-    4. **Practice your therapy skills!**
-    
-    **Ready to practice? Select a patient and start your session!**
-    """)
-
-if __name__ == "__main__":
-    main()
+    if not st.session_
