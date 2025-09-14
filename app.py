@@ -719,5 +719,92 @@ def render_session_controls():
         "Show patient actions", 
         value=st.session_state.show_actions
     )
+    def render_session_controls():
+    st.subheader("🎛️ Session Controls")
     
-    if not st.session_
+    st.session_state.show_actions = st.checkbox(
+        "Show patient actions", 
+        value=st.session_state.show_actions
+    )
+    
+    if not st.session_state.patient_config:
+        st.warning("⚠️ Select a patient first")
+        return
+    
+    if not st.session_state.session_active:
+        if st.button("▶️ Start Therapy Session", type="primary", use_container_width=True):
+            start_session()
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⏹️ End Session", use_container_width=True):
+                st.session_state.session_active = False
+                st.success("Session ended")
+                st.rerun()
+        with col2:
+            if st.button("🔄 Reset", use_container_width=True):
+                st.session_state.messages = []
+                st.session_state.rapport_level = 5.0
+                st.session_state.patient_openness = 3.0
+                st.rerun()
+
+def start_session():
+    """Start therapy session with patient's opening statement"""
+    st.session_state.session_active = True
+    st.session_state.messages = []
+    st.session_state.rapport_level = 5.0
+    st.session_state.patient_openness = 3.0
+    
+    # Generate patient's opening statement
+    simulator = get_patient_simulator()
+    initial_response, initial_audio = simulator.generate_patient_response(
+        st.session_state.patient_config, 
+        [], 
+        st.session_state.rapport_level, 
+        st.session_state.patient_openness,
+        include_voice=st.session_state.voice_mode
+    )
+    
+    st.session_state.messages.append(("patient", initial_response))
+    
+    # Store initial audio
+    if initial_audio:
+        st.session_state["patient_audio_0"] = initial_audio
+    
+    st.rerun()
+
+def render_welcome_screen():
+    st.markdown("""
+    ## Welcome to AI Patient Simulator! 🧠
+    
+    **You are the THERAPIST having natural conversations with AI patients.**
+    
+    ### 🎯 How it works:
+    
+    **👨‍⚕️ YOU = Therapist**
+    - Speak or type naturally (no scripts needed!)
+    - Ask whatever questions feel right
+    - Use your therapeutic instincts
+    
+    **🤖 AI = Patient** 
+    - Responds realistically based on their condition
+    - You HEAR their voice (not your own)
+    - Reacts authentically to your approach
+    
+    ### 🚀 Getting Started:
+    1. **Select a patient** in the sidebar (Emma, David, or Sarah)
+    2. **Enable voice mode** to hear the patient speak
+    3. **Start session** - patient will introduce themselves
+    4. **Click microphone and speak naturally** - no preparation needed!
+    
+    ### 🎙️ Voice Experience:
+    - **Natural conversation flow** - speak when ready
+    - **Auto-send** - patient responds when you finish talking
+    - **Patient voices only** - you hear them, not yourself
+    - **Browser-based** - works in Chrome, Safari, Edge
+    
+    **Ready to start a natural therapy conversation?**
+    """)
+
+if __name__ == "__main__":
+    main()
